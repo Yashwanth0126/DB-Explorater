@@ -9,7 +9,25 @@ from pydantic import BaseModel, EmailStr, ConfigDict
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+# ---------- Auth ----------
 
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserCreate(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    username: str
+    email: str
+    created_at: datetime
 
 # ---------- Rotation Policy ----------
 
