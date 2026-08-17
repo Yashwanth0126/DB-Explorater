@@ -65,6 +65,7 @@ class TargetDatabase(Base):
     applications = relationship("Application", back_populates="database", cascade="all, delete-orphan")
     stakeholders = relationship("Stakeholder", back_populates="database", cascade="all, delete-orphan")
     rotation_history = relationship("RotationHistory", back_populates="database", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="database", cascade="all, delete-orphan")  # <-- ADDED
 
 
 class Credential(Base):
@@ -144,6 +145,8 @@ class Notification(Base):
     recipients = Column(Text, nullable=True)  # comma-separated
     success = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    database = relationship("TargetDatabase", back_populates="notifications")  # <-- ADDED
 
 
 class AuditLog(Base):
