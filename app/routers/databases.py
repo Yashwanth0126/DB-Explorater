@@ -3,11 +3,19 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
-from app.security import get_current_user
+from app.security import get_current_user, is_admin
 from app.crypto import encrypt_value
 from app.services import secret_manager, audit_logger
 
 router = APIRouter(prefix="/databases", tags=["target databases"])
+
+
+def _assert_can_access(database: models.TargetDatabase, user: models.User):
+    """Regular users may only touch databases they own; admins may touch any."""
+    if is_admin(user):
+        return
+    if database.owner_id != user.id:
+        raise HTTPException(403, "You do not have access to this database")
 
 
 def _compute_status(database: models.TargetDatabase, db: Session) -> schemas.TargetDatabaseStatusOut:
@@ -49,7 +57,7 @@ def create_database(payload: schemas.TargetDatabaseCreate, db: Session = Depends
     initial_expiry_days = data.pop("initial_expiry_days")
     data["admin_password_encrypted"] = encrypt_value(data.pop("admin_password"))
 
-    database = models.TargetDatabase(**data)
+    database = models.TargetDatabase(**data, owner_id=user.id)
     db.add(database)
     db.commit()
     db.refresh(database)
@@ -64,7 +72,10 @@ def create_database(payload: schemas.TargetDatabaseCreate, db: Session = Depends
 
 @router.get("", response_model=list[schemas.TargetDatabaseStatusOut])
 def list_databases(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    databases = db.query(models.TargetDatabase).all()
+    query = db.query(models.TargetDatabase)
+    if not is_admin(user):
+        query = query.filter(models.TargetDatabase.owner_id == user.id)
+    databases = query.all()
     return [_compute_status(d, db) for d in databases]
 
 
@@ -73,6 +84,7 @@ def get_database(database_id: str, db: Session = Depends(get_db), user: models.U
     database = db.query(models.TargetDatabase).filter(models.TargetDatabase.id == database_id).first()
     if not database:
         raise HTTPException(404, "Database not found")
+    _assert_can_access(database, user)
     return _compute_status(database, db)
 
 
@@ -81,6 +93,7 @@ def delete_database(database_id: str, db: Session = Depends(get_db), user: model
     database = db.query(models.TargetDatabase).filter(models.TargetDatabase.id == database_id).first()
     if not database:
         raise HTTPException(404, "Database not found")
+    _assert_can_access(database, user)
     db.delete(database)
     db.commit()
     audit_logger.log_action(db, user.username, "delete_database", "database", database_id)

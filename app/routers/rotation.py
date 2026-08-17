@@ -6,6 +6,7 @@ from app import models, schemas
 from app.security import get_current_user
 from app.services import rule_engine
 from app.services.rotation_engine import RotationError
+from app.routers.databases import _assert_can_access
 
 router = APIRouter(prefix="/rotation", tags=["rotation"])
 
@@ -16,6 +17,7 @@ def rotate_now(database_id: str, db: Session = Depends(get_db), user: models.Use
     database = db.query(models.TargetDatabase).filter(models.TargetDatabase.id == database_id).first()
     if not database:
         raise HTTPException(404, "Database not found")
+    _assert_can_access(database, user)
 
     validity_days = database.rotation_policy.rotation_interval_days if database.rotation_policy else 30
 
@@ -40,6 +42,7 @@ def evaluate_now(database_id: str, db: Session = Depends(get_db), user: models.U
     database = db.query(models.TargetDatabase).filter(models.TargetDatabase.id == database_id).first()
     if not database:
         raise HTTPException(404, "Database not found")
+    _assert_can_access(database, user)
     try:
         return rule_engine.evaluate_database(db, database, triggered_by=f"manual:{user.username}")
     except RotationError as exc:
@@ -51,6 +54,10 @@ def evaluate_now(database_id: str, db: Session = Depends(get_db), user: models.U
 
 @router.get("/{database_id}/history", response_model=list[schemas.RotationHistoryOut])
 def get_history(database_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    database = db.query(models.TargetDatabase).filter(models.TargetDatabase.id == database_id).first()
+    if not database:
+        raise HTTPException(404, "Database not found")
+    _assert_can_access(database, user)
     return (
         db.query(models.RotationHistory)
         .filter(models.RotationHistory.database_id == database_id)

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
-from app.security import get_current_user
+from app.security import get_current_user, require_admin
 from app.services import audit_logger
 
 router = APIRouter(prefix="/policies", tags=["rotation policies"])
@@ -11,7 +11,8 @@ router = APIRouter(prefix="/policies", tags=["rotation policies"])
 
 @router.post("", response_model=schemas.RotationPolicyOut)
 def create_policy(payload: schemas.RotationPolicyCreate, db: Session = Depends(get_db),
-                   user: models.User = Depends(get_current_user)):
+                   user: models.User = Depends(require_admin)):
+    """Admin-only: rotation policies are shared, system-wide templates."""
     policy = models.RotationPolicy(**payload.model_dump())
     db.add(policy)
     db.commit()
@@ -34,7 +35,7 @@ def get_policy(policy_id: str, db: Session = Depends(get_db), user: models.User 
 
 
 @router.delete("/{policy_id}")
-def delete_policy(policy_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+def delete_policy(policy_id: str, db: Session = Depends(get_db), user: models.User = Depends(require_admin)):
     policy = db.query(models.RotationPolicy).filter(models.RotationPolicy.id == policy_id).first()
     if not policy:
         raise HTTPException(404, "Policy not found")

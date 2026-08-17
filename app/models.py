@@ -14,6 +14,11 @@ def gen_uuid():
     return str(uuid.uuid4())
 
 
+class UserRole(str, enum.Enum):
+    admin = "admin"
+    user = "user"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -21,7 +26,10 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     email = Column(String, unique=True, nullable=False)
     hashed_password = Column(String, nullable=False)
+    role = Column(String, default=UserRole.user.value, nullable=False)  # "admin" | "user"
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    databases = relationship("TargetDatabase", back_populates="owner")
 
 
 class RotationPolicy(Base):
@@ -57,6 +65,12 @@ class TargetDatabase(Base):
 
     rotation_policy_id = Column(String, ForeignKey("rotation_policies.id"), nullable=True)
     rotation_policy = relationship("RotationPolicy", back_populates="databases")
+
+    # Owner of this database entry. Regular users only see/manage databases they own;
+    # admins see/manage all databases. Nullable to stay compatible with rows created
+    # before this field existed (treated as unowned -> visible to admins only).
+    owner_id = Column(String, ForeignKey("users.id"), nullable=True)
+    owner = relationship("User", back_populates="databases")
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -27,7 +27,12 @@ class UserOut(BaseModel):
     id: str
     username: str
     email: str
+    role: str
     created_at: datetime
+
+
+class UserRoleUpdate(BaseModel):
+    role: str  # "admin" | "user"
 
 # ---------- Rotation Policy ----------
 
@@ -71,6 +76,7 @@ class TargetDatabaseOut(BaseModel):
     admin_username: str
     target_username: str
     rotation_policy_id: Optional[str]
+    owner_id: Optional[str] = None
     is_active: bool
     created_at: datetime
 

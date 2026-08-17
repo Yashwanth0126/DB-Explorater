@@ -3,16 +3,23 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app import models, schemas
-from app.security import get_current_user
+from app.security import get_current_user, is_admin
 from app.services import secret_manager
 from app.routers.databases import _compute_status
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 
+def _visible_databases(db: Session, user: models.User):
+    query = db.query(models.TargetDatabase)
+    if not is_admin(user):
+        query = query.filter(models.TargetDatabase.owner_id == user.id)
+    return query.all()
+
+
 @router.get("/summary", response_model=schemas.DashboardSummary)
 def summary(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    databases = db.query(models.TargetDatabase).all()
+    databases = _visible_databases(db, user)
     counts = {"healthy": 0, "expiring_soon": 0, "expired": 0, "rotation_failed": 0}
     for database in databases:
         row = _compute_status(database, db)
@@ -23,7 +30,7 @@ def summary(db: Session = Depends(get_db), user: models.User = Depends(get_curre
 
 @router.get("/table", response_model=list[schemas.DashboardRow])
 def table(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
-    databases = db.query(models.TargetDatabase).all()
+    databases = _visible_databases(db, user)
     rows = []
     for database in databases:
         status_row = _compute_status(database, db)
