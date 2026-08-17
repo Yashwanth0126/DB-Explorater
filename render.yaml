@@ -32,18 +32,12 @@ services:
         value: 60
       - key: NOTIFICATIONS_ENABLED
         value: "false"
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: 587
-      - key: SMTP_USERNAME
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: SMTP_FROM_EMAIL
-        sync: false
-      - key: SMTP_USE_TLS
-        value: "true"
+      - key: RESEND_API_KEY
+        sync: false   # set manually in Render dashboard - see DEPLOY.md
+      - key: NOTIFICATION_FROM_EMAIL
+        value: onboarding@resend.dev
+      - key: NOTIFICATION_FROM_NAME
+        value: Credential Rotation System
 
 databases:
   - name: credential-rotation-db

@@ -21,12 +21,9 @@ class Settings(BaseSettings):
 
     scheduler_interval_minutes: int = 60
 
-    smtp_host: str = "smtp.gmail.com"
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from_email: str = ""
-    smtp_use_tls: bool = True
+    resend_api_key: str = ""
+    notification_from_email: str = "onboarding@resend.dev"
+    notification_from_name: str = "Credential Rotation System"
     notifications_enabled: bool = False
 
 
