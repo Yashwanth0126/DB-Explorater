@@ -5,6 +5,7 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app import models
+from app.crypto import encrypt_value
 from app.services import secret_manager, notification_service, audit_logger
 from app.services.rotation_engine import (
     generate_secure_password, rotate_postgres_password, test_connection, RotationError,
@@ -65,6 +66,16 @@ def rotate_database(db: Session, database: models.TargetDatabase, validity_days:
             raise RotationError("Post-rotation connection test failed")
 
         new_credential = secret_manager.store_new_credential(db, database, new_password, validity_days)
+
+        # The admin credential used to run ALTER USER must stay in sync with reality.
+        # If the admin account IS the target account (common when there's no separate
+        # superuser), rotating the target password also changes the admin password —
+        # otherwise the next rotation attempt authenticates with a stale password and
+        # fails, even though the previous rotation succeeded.
+        if database.admin_username == database.target_username:
+            database.admin_password_encrypted = encrypt_value(new_password)
+            db.add(database)
+            db.commit()
 
         _propagate_to_applications(db, database, new_credential)
 
