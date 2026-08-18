@@ -88,6 +88,38 @@ def get_database(database_id: str, db: Session = Depends(get_db), user: models.U
     return _compute_status(database, db)
 
 
+@router.get("/{database_id}/secret", response_model=schemas.SecretOut)
+def get_database_secret(database_id: str, db: Session = Depends(get_db),
+                         user: models.User = Depends(get_current_user)):
+    """
+    Human-facing credential reveal, gated by a JWT + ownership (or admin).
+    Separate from /secrets/current, which is machine-facing and gated by an
+    Application's API key — that endpoint is what apps call themselves to
+    auto-fetch their own rotated password at runtime, and stays untouched.
+    """
+    database = db.query(models.TargetDatabase).filter(models.TargetDatabase.id == database_id).first()
+    if not database:
+        raise HTTPException(404, "Database not found")
+    _assert_can_access(database, user)
+
+    credential = secret_manager.get_active_credential(db, database.id)
+    if not credential:
+        raise HTTPException(404, "No active credential for this database yet")
+
+    audit_logger.log_action(db, user.username, "view_secret", "database", database.id)
+
+    return schemas.SecretOut(
+        database_id=database.id,
+        database_name=database.name,
+        host=database.host,
+        port=database.port,
+        db_name=database.db_name,
+        username=database.target_username,
+        password=secret_manager.get_plain_password(credential),
+        expires_at=credential.expires_at,
+    )
+
+
 @router.delete("/{database_id}")
 def delete_database(database_id: str, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
     database = db.query(models.TargetDatabase).filter(models.TargetDatabase.id == database_id).first()
