@@ -1,15 +1,14 @@
 import logging
+import smtplib
+from email.mime.text import MIMEText
 from typing import List
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app import models
 
 logger = logging.getLogger("notifications")
-
-RESEND_API_URL = "https://api.resend.com/emails"
 
 
 def _send_email(recipients: List[str], subject: str, body: str) -> bool:
@@ -21,31 +20,33 @@ def _send_email(recipients: List[str], subject: str, body: str) -> bool:
         logger.warning("No recipients provided for notification: %s", subject)
         return False
 
-    if not settings.resend_api_key:
-        logger.error("RESEND_API_KEY is not set; cannot send notification: %s", subject)
+    if not settings.smtp_host or not settings.smtp_username or not settings.smtp_password:
+        logger.error(
+            "SMTP is not fully configured (SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD); "
+            "cannot send notification: %s", subject,
+        )
         return False
 
-    payload = {
-        "from": f"{settings.notification_from_name} <{settings.notification_from_email}>",
-        "to": recipients,
-        "subject": subject,
-        "text": body,
-    }
-    headers = {
-        "Authorization": f"Bearer {settings.resend_api_key}",
-        "Content-Type": "application/json",
-    }
+    msg = MIMEText(body, "plain")
+    msg["Subject"] = subject
+    msg["From"] = f"{settings.notification_from_name} <{settings.notification_from_email}>"
+    msg["To"] = ", ".join(recipients)
 
     try:
-        response = httpx.post(RESEND_API_URL, json=payload, headers=headers, timeout=15)
-        if response.status_code >= 400:
-            logger.error(
-                "Resend API returned an error (%s): %s", response.status_code, response.text
-            )
-            return False
+        if settings.smtp_use_tls:
+            # STARTTLS flow — typically port 587
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+                server.starttls()
+                server.login(settings.smtp_username, settings.smtp_password)
+                server.sendmail(settings.notification_from_email, recipients, msg.as_string())
+        else:
+            # Implicit SSL flow — typically port 465
+            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+                server.login(settings.smtp_username, settings.smtp_password)
+                server.sendmail(settings.notification_from_email, recipients, msg.as_string())
         return True
     except Exception as exc:
-        logger.error("Failed to send notification email via Resend: %s", exc)
+        logger.error("Failed to send notification email via SMTP: %s", exc)
         return False
 
 
