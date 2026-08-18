@@ -1,87 +1,104 @@
-import secrets
-import string
 import logging
+import smtplib
+from email.mime.text import MIMEText
+from typing import List
 
-import psycopg2
+from sqlalchemy.orm import Session
 
+from app.config import settings
 from app import models
-from app.crypto import decrypt_value
 
-logger = logging.getLogger("rotation")
-
-
-class RotationError(Exception):
-    pass
+logger = logging.getLogger("notifications")
 
 
-def generate_secure_password(length: int = 24) -> str:
-    """Generates a strong random password safe for use in SQL identifiers/values."""
-    # Avoid characters that commonly cause quoting issues in connection strings / shells
-    alphabet = string.ascii_letters + string.digits + "!@#%^&*()-_=+"
-    while True:
-        pwd = "".join(secrets.choice(alphabet) for _ in range(length))
-        # ensure at least one of each class for reasonable strength
-        if (any(c.islower() for c in pwd) and any(c.isupper() for c in pwd)
-                and any(c.isdigit() for c in pwd)):
-            return pwd
+def _send_email(recipients: List[str], subject: str, body: str) -> bool:
+    if not settings.notifications_enabled:
+        logger.info("[notifications disabled] To: %s | %s\n%s", recipients, subject, body)
+        return True  # treated as "handled", just not actually emailed
 
+    if not recipients:
+        logger.warning("No recipients provided for notification: %s", subject)
+        return False
 
-def rotate_postgres_password(database: models.TargetDatabase, new_password: str) -> None:
-    """
-    Connects as the admin/superuser and rotates the target application user's password.
-    Raises RotationError on any failure.
-    """
-    admin_password = decrypt_value(database.admin_password_encrypted)
-
-    conn = None
-    try:
-        conn = psycopg2.connect(
-            host=database.host,
-            port=database.port,
-            dbname=database.db_name,
-            user=database.admin_username,
-            password=admin_password,
-            connect_timeout=10,
+    if not settings.smtp_host or not settings.smtp_username or not settings.smtp_password:
+        logger.error(
+            "SMTP is not fully configured (SMTP_HOST/SMTP_USERNAME/SMTP_PASSWORD); "
+            "cannot send notification: %s", subject,
         )
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            # target_username is a trusted, admin-configured value (not raw user input),
-            # but we still validate it defensively before interpolating into DDL.
-            _validate_identifier(database.target_username)
-            # psycopg2 can't parameterize identifiers/ALTER USER syntax; password is
-            # passed via %s so it's still safely escaped by the driver.
-            cur.execute(
-                f'ALTER USER "{database.target_username}" WITH PASSWORD %s',
-                (new_password,),
-            )
-    except Exception as exc:
-        logger.error("Rotation failed for database %s: %s", database.name, exc)
-        raise RotationError(str(exc)) from exc
-    finally:
-        if conn is not None:
-            conn.close()
+        return False
 
+    msg = MIMEText(body, "plain")
+    msg["Subject"] = subject
+    msg["From"] = f"{settings.notification_from_name} <{settings.notification_from_email}>"
+    msg["To"] = ", ".join(recipients)
 
-def _validate_identifier(identifier: str) -> None:
-    """Basic guard against SQL identifier injection for the target_username field."""
-    if not identifier or not all(c.isalnum() or c in "_-" for c in identifier):
-        raise RotationError(f"Unsafe target_username for ALTER USER: {identifier!r}")
-
-
-def test_connection(database: models.TargetDatabase, username: str, password: str) -> bool:
-    """Verifies that the given credential can actually connect to the target database."""
     try:
-        conn = psycopg2.connect(
-            host=database.host,
-            port=database.port,
-            dbname=database.db_name,
-            user=username,
-            password=password,
-            connect_timeout=10,
-        )
-        conn.close()
+        if settings.smtp_use_tls:
+            # STARTTLS flow — typically port 587
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+                server.starttls()
+                server.login(settings.smtp_username, settings.smtp_password)
+                server.sendmail(settings.notification_from_email, recipients, msg.as_string())
+        else:
+            # Implicit SSL flow — typically port 465
+            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+                server.login(settings.smtp_username, settings.smtp_password)
+                server.sendmail(settings.notification_from_email, recipients, msg.as_string())
         return True
     except Exception as exc:
-        logger.error("Connection test failed for database %s user %s: %s",
-                     database.name, username, exc)
+        logger.error("Failed to send notification email via SMTP: %s", exc)
         return False
+
+
+def notify(db: Session, database: models.TargetDatabase, notification_type: str,
+           subject: str, message: str) -> models.Notification:
+    recipients = [s.email for s in database.stakeholders]
+    success = _send_email(recipients, subject, message)
+
+    record = models.Notification(
+        database_id=database.id,
+        notification_type=notification_type,
+        subject=subject,
+        message=message,
+        recipients=",".join(recipients),
+        success=success,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def notify_expiry_warning(db: Session, database: models.TargetDatabase, days_remaining: int, auto_rotate: bool):
+    subject = f"[Credential Expiry] {database.name} expires in {days_remaining} day(s)"
+    body = (
+        f"Database: {database.name}\n"
+        f"Target user: {database.target_username}\n"
+        f"Days remaining: {days_remaining}\n\n"
+        f"Automatic rotation is {'enabled' if auto_rotate else 'DISABLED'} for this database.\n"
+        + ("The password will be rotated automatically." if auto_rotate
+           else "Manual rotation is required — please rotate this credential soon.")
+    )
+    return notify(db, database, "expiry_warning", subject, body)
+
+
+def notify_rotation_success(db: Session, database: models.TargetDatabase, new_expiry):
+    subject = f"[Rotation Success] {database.name} credential rotated"
+    body = (
+        f"Database: {database.name}\n"
+        f"Target user: {database.target_username}\n"
+        f"New expiry: {new_expiry}\n\n"
+        f"The password was rotated automatically and propagated to the secret store."
+    )
+    return notify(db, database, "rotation_success", subject, body)
+
+
+def notify_rotation_failed(db: Session, database: models.TargetDatabase, error: str):
+    subject = f"[ACTION REQUIRED] Rotation FAILED for {database.name}"
+    body = (
+        f"Database: {database.name}\n"
+        f"Target user: {database.target_username}\n\n"
+        f"Automatic rotation failed with error:\n{error}\n\n"
+        f"Manual intervention is required."
+    )
+    return notify(db, database, "rotation_failed", subject, body)
