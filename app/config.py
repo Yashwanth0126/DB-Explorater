@@ -21,15 +21,23 @@ class Settings(BaseSettings):
 
     scheduler_interval_minutes: int = 60
 
-    # SMTP (replaces Resend HTTP API). Common providers: Gmail (smtp.gmail.com:587,
-    # use an App Password, not your normal password), SendGrid (smtp.sendgrid.net:587),
-    # Mailgun (smtp.mailgun.org:587), or your own mail server.
+    # Email provider switch: "resend" (default — HTTP API, works on Render free
+    # tier since it's just an HTTPS call, no SMTP ports involved) or "smtp"
+    # (works fine for local development, but Render's free tier blocks
+    # outbound SMTP ports — use "resend" there instead).
+    email_provider: str = "resend"
+
+    # ---- Resend (https://resend.com) ----
+    resend_api_key: str = ""
+
+    # ---- SMTP (local development) ----
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_use_tls: bool = True  # STARTTLS on 587. Set False + smtp_port=465 for implicit SSL.
-    notification_from_email: str = "noreply@example.com"
+
+    notification_from_email: str = "onboarding@resend.dev"
     notification_from_name: str = "Credential Rotation System"
     notifications_enabled: bool = False
 
