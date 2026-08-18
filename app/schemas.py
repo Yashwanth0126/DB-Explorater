@@ -9,17 +9,21 @@ from pydantic import BaseModel, EmailStr, ConfigDict
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
-# ---------- Auth ----------
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
 
 
 class UserCreate(BaseModel):
     username: str
     email: EmailStr
     password: str
+
+
+class AdminUserCreate(BaseModel):
+    """Used by admins to directly create an account with a chosen role
+    (e.g. inviting someone straight in as an admin), skipping public signup."""
+    username: str
+    email: EmailStr
+    password: str
+    role: str = "user"  # "admin" | "user"
 
 
 class UserOut(BaseModel):

@@ -51,6 +51,43 @@ def list_users(db: Session = Depends(get_db), _: models.User = Depends(require_a
     return db.query(models.User).order_by(models.User.created_at.desc()).all()
 
 
+@router.post("/users", response_model=schemas.UserOut, status_code=status.HTTP_201_CREATED)
+def create_user(payload: schemas.AdminUserCreate, db: Session = Depends(get_db),
+                 admin: models.User = Depends(require_admin)):
+    """
+    Admin-only: directly create an account with a chosen role (admin or user),
+    e.g. inviting someone straight in as an admin. Unlike /auth/signup, this
+    skips the "sign up as user, then get promoted" flow entirely.
+    """
+    if payload.role not in (models.UserRole.admin.value, models.UserRole.user.value):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "role must be 'admin' or 'user'")
+
+    existing = (
+        db.query(models.User)
+        .filter(
+            (models.User.username == payload.username)
+            | (models.User.email == payload.email)
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username or email is already registered",
+        )
+
+    user = models.User(
+        username=payload.username,
+        email=payload.email,
+        hashed_password=hash_password(payload.password),
+        role=payload.role,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 @router.patch("/users/{user_id}/role", response_model=schemas.UserOut)
 def update_user_role(user_id: str, payload: schemas.UserRoleUpdate, db: Session = Depends(get_db),
                       admin: models.User = Depends(require_admin)):
